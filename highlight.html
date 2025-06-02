@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>相互ハイライト動的入力版</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 2em;
+      background: #fdfdfd;
+    }
+    .prompt-group {
+      margin-bottom: 1.5em;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1em;
+      background: #fff;
+    }
+    .group-title {
+      font-weight: bold;
+      margin-bottom: 0.5em;
+    }
+    .pair {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 0.2em;
+      margin-bottom: 0;
+      background: #f7f7f7;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+    .word {
+      padding: 2px 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+      font-size: 1em;
+    }
+    .en-word {
+      color: #1565c0;
+      font-weight: bold;
+    }
+    .paren {
+      color: #388e3c;
+      font-weight: bold;
+    }
+    .non-latin {
+      color: #222;
+      font-weight: normal;
+    }
+    .highlight {
+      background-color: #fffa8b;
+    }
+    .input-group {
+      display: flex;
+      gap: 0.5em;
+      margin-bottom: 0.5em;
+    }
+    input {
+      padding: 0.5em;
+      font-size: 1em;
+      flex: 1;
+    }
+    button {
+      padding: 0.3em 0.8em;
+      font-size: 1em;
+    }
+    .output {
+      margin-top: 1em;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.2em;
+    }
+    .all-output {
+      margin-top: 2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>📝 単語ペアを入力して、ブラウザでハイライト＆編集！</h2>
+
+  <div id="groups"></div>
+
+  <div class="all-output">
+    <button id="allPromptBtn" onclick="showAllPrompt()">全リスト合成プロンプト出力</button>
+    <textarea id="allPromptArea" rows="3" style="width:100%;margin-top:0.5em;"></textarea>
+  </div>
+
+  <script>
+    // --- 設定 ---
+    const GROUPS = [
+      { name: 'キャラクター', id: 'group1' },
+      { name: '背景', id: 'group2' },
+      { name: 'その他', id: 'group3' }
+    ];
+    // --- 状態管理 ---
+    let idCounter = 1;
+    const groupData = {
+      group1: [],
+      group2: [],
+      group3: []
+    };
+
+    // --- UI生成 ---
+    function renderGroups() {
+      const groupsDiv = document.getElementById('groups');
+      groupsDiv.innerHTML = '';
+      GROUPS.forEach(group => {
+        const gDiv = document.createElement('div');
+        gDiv.className = 'prompt-group';
+        gDiv.id = group.id + '-container';
+        gDiv.innerHTML = `
+          <div class="group-title">${group.name}</div>
+          <div class="input-group">
+            <input type="text" id="${group.id}-en" placeholder="英語入力">
+            <input type="text" id="${group.id}-ja" placeholder="日本語入力">
+            <button onclick="addPair('${group.id}')">追加</button>
+          </div>
+          <div class="output" id="${group.id}-output"></div>
+          <button id="${group.id}-promptBtn" onclick="showPrompt('${group.id}')">英文プロンプト出力</button>
+          <textarea id="${group.id}-promptArea" rows="2" style="width:100%;margin-top:0.5em;"></textarea>
+        `;
+        groupsDiv.appendChild(gDiv);
+      });
+    }
+    renderGroups();
+
+    // --- ペア追加 ---
+    function addPair(groupId) {
+      let enText = document.getElementById(`${groupId}-en`).value.trim();
+      let jaText = document.getElementById(`${groupId}-ja`).value.trim();
+      if (!enText || !jaText) return;
+      const delimiterRegex = /[,、，]/; // ドットを除外
+      const enWords = enText.split(delimiterRegex).map(w => w.trim()).filter(Boolean);
+      const jaWords = jaText.split(delimiterRegex).map(w => w.trim()).filter(Boolean);
+      const pairCount = Math.min(enWords.length, jaWords.length);
+      for (let i = 0; i < pairCount; i++) {
+        groupData[groupId].push({
+          id: idCounter,
+          en: enWords[i],
+          ja: jaWords[i]
+        });
+        idCounter++;
+      }
+      document.getElementById(`${groupId}-en`).value = '';
+      document.getElementById(`${groupId}-ja`).value = '';
+      renderPairs(groupId);
+    }
+
+    // --- ペア表示・削除 ---
+    function renderPairs(groupId) {
+      const outputDiv = document.getElementById(`${groupId}-output`);
+      outputDiv.innerHTML = '';
+      groupData[groupId].forEach(pair => {
+        const pairDiv = document.createElement('div');
+        pairDiv.className = 'pair';
+        pairDiv.dataset.id = pair.id;
+        // 英単語の色分け処理
+        const enSpan = document.createElement('span');
+        enSpan.className = 'word en-word';
+        enSpan.dataset.id = pair.id;
+        enSpan.innerHTML = highlightEnWord(pair.en);
+        // ダブルクリックで削除
+        enSpan.ondblclick = function() {
+          groupData[groupId] = groupData[groupId].filter(p => p.id !== pair.id);
+          renderPairs(groupId);
+        };
+        // 日本語側
+        const jaSpan = document.createElement('span');
+        jaSpan.className = 'word';
+        jaSpan.dataset.id = pair.id;
+        jaSpan.textContent = pair.ja;
+        jaSpan.ondblclick = function() {
+          groupData[groupId] = groupData[groupId].filter(p => p.id !== pair.id);
+          renderPairs(groupId);
+        };
+        [enSpan, jaSpan].forEach(el => {
+          el.addEventListener('mouseenter', () => highlight(el.dataset.id));
+          el.addEventListener('mouseleave', () => unhighlight(el.dataset.id));
+        });
+        // 削除ボタンは非表示（必要ならコメントアウトで復活可）
+        // const delBtn = document.createElement('button');
+        // delBtn.textContent = '削除';
+        // delBtn.style.marginLeft = '0.5em';
+        // delBtn.onclick = function() {
+        //   groupData[groupId] = groupData[groupId].filter(p => p.id !== pair.id);
+        //   renderPairs(groupId);
+        // };
+        pairDiv.appendChild(enSpan);
+        pairDiv.appendChild(jaSpan);
+        // pairDiv.appendChild(delBtn);
+        outputDiv.appendChild(pairDiv);
+      });
+      // プロンプト出力ボタン・エリアの表示制御
+      document.getElementById(`${groupId}-promptBtn`).style.display = groupData[groupId].length ? 'inline-block' : 'none';
+      document.getElementById(`${groupId}-promptArea`).style.display = groupData[groupId].length ? 'block' : 'none';
+    }
+    // 初期化
+    GROUPS.forEach(g => renderPairs(g.id));
+
+    // --- ハイライト ---
+    function highlight(id) {
+      document.querySelectorAll(`[data-id="${id}"]`).forEach(el => el.classList.add('highlight'));
+    }
+    function unhighlight(id) {
+      document.querySelectorAll(`[data-id="${id}"]`).forEach(el => el.classList.remove('highlight'));
+    }
+
+    // --- 英文プロンプト出力 ---
+    function showPrompt(groupId) {
+      const prompt = groupData[groupId].map(p => p.en).join(', ');
+      document.getElementById(`${groupId}-promptArea`).value = prompt;
+    }
+
+    // --- 全リスト合成プロンプト出力 ---
+    function showAllPrompt() {
+      const allWords = GROUPS.flatMap(g => groupData[g.id].map(p => p.en));
+      document.getElementById('allPromptArea').value = allWords.join(', ');
+    }
+    // --- 英単語の色分け処理 ---
+    function highlightEnWord(text) {
+      // ( ) かっこ部分を緑、ローマ字以外を黒、ローマ字は青
+      // 正規表現で分割
+      return text.replace(/([()])/g, '<span class="paren">$1</span>')
+        .replace(/([^A-Za-z0-9\s.,:;\-\/\[\]{}'"!?<>@#$%^&*_+=~`|\\]+)/g, '<span class="non-latin">$1</span>');
+    }
+  </script>
+
+</body>
+</html>
