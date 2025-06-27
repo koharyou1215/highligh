@@ -29,3 +29,13 @@ Thumbs.db
 
 # ログファイル
 *.log
+
+# 親ディレクトリのファイルを除外
+../README.md
+../highlight.html
+../Aqua Voice/
+../AquaVoiceImproved.ahk
+../AutoHotkey_v2_Guidelines.md
+../ClipboardManager-vscode*/
+../LastClipboard.ahk.backup
+../Master Script*/
