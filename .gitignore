@@ -1,0 +1,41 @@
+# Python環境
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# 画像ファイル（大きすぎる場合は除外）
+images/*.png
+images/*.jpg
+images/*.jpeg
+
+# 会話履歴（プライベート情報）
+conversations/
+
+# 音声ファイル
+audio/
+
+# 一時ファイル
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDEファイル
+.vscode/
+.idea/
+
+# ログファイル
+*.log
+
+# 親ディレクトリのファイルを除外
+../README.md
+../highlight.html
+../Aqua Voice/
+../AquaVoiceImproved.ahk
+../AutoHotkey_v2_Guidelines.md
+../ClipboardManager-vscode*/
+../LastClipboard.ahk.backup
+../Master Script*/
