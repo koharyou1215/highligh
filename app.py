@@ -3,6 +3,12 @@ import datetime
 import os
 import html
 import logging
+import base64
+from config_manager import ConfigManager
+import traceback
+from PIL import Image
+import io
+from memory_manager import MemoryManager
 
 # ログレベルを設定してパフォーマンスを向上
 logging.getLogger("PIL").setLevel(logging.WARNING)
@@ -22,18 +28,38 @@ except ImportError as e:
     st.stop()
 
 # ページ設定
+config_manager = ConfigManager()
+page_icon = config_manager.data.get("images", {}).get("icon", "🤖")
 st.set_page_config(
     page_title="AI Character Chatbot",
-    page_icon="🤖",
+    page_icon=page_icon,
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# 背景画像を適用（存在する場合のみ）
+bg_path = config_manager.data.get("images", {}).get("background")
+if bg_path and os.path.exists(bg_path):
+    with open(bg_path, "rb") as _bg_fp:
+        encoded_bg = base64.b64encode(_bg_fp.read()).decode()
+    bg_css = """
+    <style>
+    .stApp {
+        background-image: url('data:image/png;base64,ENCODED_BG');
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center center;
+        background-attachment: fixed;
+    }
+    </style>
+    """.replace("ENCODED_BG", encoded_bg)
+    st.markdown(bg_css, unsafe_allow_html=True)
 
 # カスタムCSS（モバイル対応強化）
 st.markdown("""
 <style>
 .main-header {
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(90deg, rgba(102,126,234,0.6) 0%, rgba(118,75,162,0.6) 100%);
     padding: 1rem;
     border-radius: 10px;
     color: white;
@@ -137,39 +163,51 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyB6swTTIlDM3pgyALHjZDFTUIQf2f
 # 初期化（キャッシュリセット機能付き）
 @st.cache_resource
 def initialize_components():
+    """
+    アプリケーションの全コンポーネントを初期化します。
+    失敗した場合は、Noneのタプルを返します。
+    """
     try:
+        # 必須コンポーネントの初期化
         character_manager = CharacterManager()
         chatbot = GeminiChatbot(GEMINI_API_KEY)
         sd_api = StableDiffusionAPI()
-        voice_manager = VoiceManager()
         conversation_manager = ConversationManager()
         emotion_manager = EmotionalCharacterManager()
         theme_manager = ThemeManager()
-        
-        # Gemini API接続テスト
-        test_response = chatbot.chat("テスト")
-        if not test_response:
-            st.warning("Gemini APIの接続に問題がある可能性があります。")
-        
-        return character_manager, chatbot, sd_api, voice_manager, conversation_manager, emotion_manager, theme_manager
+        memory_manager = MemoryManager()
+
+        # 音声マネージャーは失敗しても良いオプションコンポーネント
+        voice_manager = None
+        try:
+            voice_manager = VoiceManager()
+            if not voice_manager.is_available():
+                st.toast("🔊 音声エンジンは利用可能ですが、正常に動作していません。", icon="⚠️")
+        except Exception as e:
+            print(f"VoiceManagerの初期化に失敗: {e}")
+            st.toast("🔊 音声機能の初期化に失敗したため、無効化されました。", icon="⚠️")
+            voice_manager = None
+
+        # Gemini APIへの接続をテスト
+        try:
+            # chatbotがNoneでないことを確認してからテストを実行
+            if chatbot:
+                test_response = chatbot.chat("テスト")
+                if not test_response:
+                    st.warning("Gemini APIの接続に問題がある可能性があります。")
+        except Exception as e:
+            st.error(f"Gemini APIへの接続テストに失敗しました: {e}")
+            st.info("APIキーが正しいか、ネットワーク接続が有効か確認してください。")
+            return (None,) * 8 # Return a tuple of Nones matching the number of managers
+
+        return character_manager, chatbot, sd_api, voice_manager, conversation_manager, emotion_manager, theme_manager, memory_manager
+
     except Exception as e:
-        st.error(f"コンポーネントの初期化に失敗しました: {e}")
-        return None, None, None, None, None, None, None
-        print(f"音声マネージャー初期化完了: {voice_manager.is_available()}")
-        print(f"利用可能メソッド: {[method for method in dir(voice_manager) if not method.startswith('_')]}")
-        
-        return character_manager, chatbot, sd_api, voice_manager, conversation_manager, emotion_manager, theme_manager
-    except Exception as e:
-        print(f"コンポーネント初期化エラー: {e}")
-        # エラー時は基本機能のみ
-        character_manager = CharacterManager()
-        chatbot = GeminiChatbot(GEMINI_API_KEY)
-        sd_api = StableDiffusionAPI()
-        voice_manager = None  # 音声機能を無効化
-        conversation_manager = ConversationManager()
-        emotion_manager = EmotionalCharacterManager()
-        theme_manager = ThemeManager()
-        return character_manager, chatbot, sd_api, voice_manager, conversation_manager, emotion_manager, theme_manager
+        st.error("アプリケーションの初期化中に致命的なエラーが発生しました。")
+        st.error(f"エラー詳細: {e}")
+        st.code(traceback.format_exc())
+        st.info("必要なパッケージがすべてインストールされているか、`requirements.txt`を確認してください。")
+        return (None,) * 8 # Return a tuple of Nones matching the number of managers
 
 # セッション状態の初期化
 def initialize_session_state():
@@ -187,16 +225,52 @@ def initialize_session_state():
         st.session_state.emotion_tracking = True
     if 'conversation_starter' not in st.session_state:
         st.session_state.conversation_starter = None
+    if 'lora_weights' not in st.session_state:
+        st.session_state.lora_weights = {}
+    if 'needs_ai_response' not in st.session_state:
+        st.session_state.needs_ai_response = False
+    if 'needs_image_generation' not in st.session_state:
+        st.session_state.needs_image_generation = False
 
 def main():
     # コンポーネントの初期化
     components = initialize_components()
-    if None in components:
-        st.error("アプリケーションの初期化に失敗しました。")
-        st.stop()
+    character_manager, chatbot, sd_api, voice_manager, conversation_manager, emotion_manager, theme_manager, memory_manager = components
+
+    # 必須コンポーネントが初期化されたかチェック
+    # voice_managerはオプションなのでNoneでも許容
+    required_components_map = {
+        "CharacterManager": character_manager,
+        "GeminiChatbot": chatbot,
+        "StableDiffusionAPI": sd_api,
+        "ConversationManager": conversation_manager,
+        "EmotionalCharacterManager": emotion_manager,
+        "ThemeManager": theme_manager,
+        "MemoryManager": memory_manager
+    }
     
-    character_manager, chatbot, sd_api, voice_manager, conversation_manager, emotion_manager, theme_manager = components
+    failed_components = [name for name, comp in required_components_map.items() if comp is None]
+
+    if failed_components:
+        st.error(f"アプリケーションの必須コンポーネントの初期化に失敗しました: {', '.join(failed_components)}")
+        st.info("コンソールに表示されているエラーメッセージや、APIキーなどの設定を確認してください。")
+        return  # ここで処理を終了
+    
+    # リンターにNoneでないことを伝える
+    assert character_manager is not None
+    assert chatbot is not None
+    assert sd_api is not None
+    assert conversation_manager is not None
+    assert emotion_manager is not None
+    assert theme_manager is not None
+    assert memory_manager is not None
+
     initialize_session_state()
+    
+    # ユーザーペルソナをチャットボットへ適用
+    user_persona = config_manager.data.get("user", {}).get("persona", "")
+    if user_persona:
+        chatbot.set_user_persona(user_persona)
     
     # テーマ適用
     current_theme = st.session_state.current_theme
@@ -265,19 +339,53 @@ def main():
         
         st.divider()
         
+        # 📝 メモ管理
+        st.subheader("📝 メモ")
+        if st.session_state.current_character:
+            char_name = st.session_state.current_character.get("name", "unknown")
+            # 既存メモ一覧
+            memories = memory_manager.get_memories(char_name)
+            if memories:
+                for mem in memories:
+                    with st.expander(f"{mem['timestamp']}"):
+                        st.write(mem["content"])
+                        if st.button("削除", key=f"delmem_{mem['timestamp']}"):
+                            if memory_manager.delete_memory(mem["filepath"]):
+                                st.success("削除しました")
+                                st.rerun()
+            else:
+                st.caption("メモはまだありません")
+
+            # 新規メモ追加
+            new_mem = st.text_area("新しいメモ", key="new_memory")
+            if st.button("保存", key="save_memory") and new_mem.strip():
+                memory_manager.add_memory(char_name, new_mem.strip())
+                st.success("メモを保存しました")
+                st.rerun()
+        else:
+            st.caption("キャラクターを選択するとメモ機能が有効になります")
+
+        st.divider()
+        
         # 会話履歴管理
         loaded_conversation = conversation_manager.get_conversation_ui()
         if loaded_conversation:
             # 会話を復元
-            st.session_state.messages = loaded_conversation.get('messages', [])
+            loaded_messages = loaded_conversation.get('messages', [])
             character_name = loaded_conversation.get('character_name', '')
             
             # キャラクターも復元
             character_data = character_manager.get_character_by_name(character_name)
             if character_data:
                 st.session_state.current_character = character_data
+                # 【重要】UIとAIの履歴を同期させるための修正
+                # 1. キャラクターを設定 (AI内部の履歴がクリアされる)
                 chatbot.set_character(character_data)
-                
+                # 2. 保存された履歴をAIに読み込ませる
+                chatbot.load_history(loaded_messages)
+                # 3. UIの履歴をAIの履歴に完全に一致させる
+                st.session_state.messages = chatbot.conversation_history
+
                 # 音声設定（エラーハンドリング追加）
                 try:
                     if voice_manager:
@@ -286,7 +394,8 @@ def main():
                     st.warning(f"音声設定でエラーが発生しました: {e}")
             
             st.success(f"✅ 会話が復元されました: {character_name}")
-            # リロードを削除（自動で反映される）
+            # 状態を完全に更新して不整合を防ぐために再実行が必須
+            st.rerun()
         
         st.divider()
         
@@ -370,6 +479,38 @@ def main():
         
         # Stable Diffusion設定
         st.subheader("🎨 画像生成")
+        # 直近の会話を画像プロンプトに使うか選択
+        use_chat_prompt = st.checkbox("直近の会話を画像プロンプトに使用", value=True, help="オンの場合、直近のユーザーメッセージを画像プロンプトに含めます")
+
+        # LoRA設定
+        available_loras = sd_api.get_loras()
+        if available_loras:
+            st.subheader("🎛️ LoRA設定")
+            selected_loras = st.multiselect(
+                "適用するLoRAを選択",
+                options=available_loras,
+                default=[name for name in st.session_state.lora_weights.keys() if name in available_loras],
+                help="複数のLoRAを組み合わせることができます。"
+            )
+
+            # 選択されなかったLoRAをリセット
+            for lora_name in list(st.session_state.lora_weights.keys()):
+                if lora_name not in selected_loras:
+                    del st.session_state.lora_weights[lora_name]
+
+            # 選択されたLoRAの強度スライダーを生成
+            for lora_name in selected_loras:
+                st.session_state.lora_weights[lora_name] = st.slider(
+                    f"強度: {lora_name}",
+                    min_value=0.0,
+                    max_value=1.5,
+                    value=st.session_state.lora_weights.get(lora_name, 0.7),
+                    step=0.05,
+                    key=f"lora_weight_{lora_name}"
+                )
+        else:
+            st.caption("利用可能なLoRAが見つかりません。")
+
         sd_connected = sd_api.check_connection()
         
         if sd_connected:
@@ -381,16 +522,31 @@ def main():
                     base_prompt = character.get('image_prompt', '')
                     negative_prompt = character.get('image_negative_prompt', '')
                     
-                    # 感情に応じたプロンプト調整
-                    if st.session_state.emotion_tracking and base_prompt:
-                        emotional_prompt = emotion_manager.get_emotional_image_prompt(base_prompt)
-                        image_prompt = emotional_prompt
+                    # プロンプト決定ロジック
+                    image_prompt = base_prompt or ""
+                    if use_chat_prompt and st.session_state.messages:
+                        # 直近のユーザー発言を取得
+                        last_user_msg = None
+                        for msg in reversed(st.session_state.messages):
+                            if msg["role"] == "user":
+                                last_user_msg = msg["content"]
+                                break
+                        if last_user_msg:
+                            image_prompt = f"{image_prompt} {last_user_msg}".strip()
+                    if not image_prompt:
+                        st.warning("画像プロンプトが生成できませんでした。会話を入力するか、キャラクターの image_prompt を設定してください。")
                     else:
-                        image_prompt = base_prompt
-                    
-                    if image_prompt:
+                        # LoRAプロンプトを追加
+                        lora_prompts = []
+                        if 'lora_weights' in st.session_state:
+                            for lora_name, weight in st.session_state.lora_weights.items():
+                                if weight > 0:
+                                    lora_prompts.append(f"<lora:{lora_name}:{weight}>")
+                        
+                        final_prompt = f"{image_prompt} {' '.join(lora_prompts)}".strip()
+
                         image = sd_api.generate_character_image(
-                            image_prompt, 
+                            final_prompt, 
                             negative_prompt
                         )
                         
@@ -411,7 +567,7 @@ def main():
                                     'character': character.get('name', ''),
                                     'timestamp': timestamp,
                                     'emotion': emotion_info['description'],
-                                    'prompt': image_prompt
+                                    'prompt': final_prompt
                                 })
                                 st.success("✅ 画像が生成されました！")
                                 # 画像生成後のリロードを削除（不要）
@@ -419,8 +575,6 @@ def main():
                                 st.error("画像の保存に失敗しました。")
                         else:
                             st.error("画像生成に失敗しました。")
-                    else:
-                        st.warning("画像プロンプトが設定されていません。")
         else:
             st.error("❌ Stable Diffusion未接続")
             st.caption("Stable Diffusion WebUIが起動していることを確認してください。")
@@ -518,11 +672,24 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                     else:
-                        # 安全なHTMLエスケープ
+                        # AIメッセージ（画像付き）
                         escaped_content = html.escape(message["content"])
+                        image_html = ""
+                        # "image"キーが存在し、中身がNoneでないことを確認
+                        if message.get("image"):
+                            try:
+                                # PIL ImageをBase64に変換
+                                buffered = io.BytesIO()
+                                message["image"].save(buffered, format="PNG")
+                                img_str = base64.b64encode(buffered.getvalue()).decode()
+                                image_html = f'<img src="data:image/png;base64,{img_str}" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">'
+                            except Exception as e:
+                                print(f"画像のHTML変換でエラー: {e}")
+
                         st.markdown(f"""
                         <div class="ai-message">
                             🤖 {escaped_content}
+                            {image_html}
                         </div>
                         """, unsafe_allow_html=True)
             else:
@@ -539,45 +706,136 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
         
-        # チャット入力
+        # チャット入力ロジックを修正
         if st.session_state.current_character:
+            # --- Stage 1: ユーザー入力受付 ---
             user_input = st.chat_input("メッセージを入力してください...")
-            
             if user_input:
-                # ユーザーメッセージを追加
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                
-                # 感情分析
-                if st.session_state.emotion_tracking:
-                    detected_emotion = emotion_manager.update_emotion(user_input)
-                
-                # AI応答を生成
-                with st.spinner("応答生成中..."):
-                    ai_response = chatbot.chat(user_input)
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                    
-                    # 音声読み上げ（完全安全モード）
-                    if st.session_state.voice_enabled and voice_manager:
-                        try:
-                            # 音声マネージャーが利用可能な場合のみ実行
-                            if voice_manager.is_available():
-                                st.info("🔊 音声読み上げを開始します...")
-                                voice_manager.speak_text(ai_response)
-                            else:
-                                st.warning("❌ 音声機能が利用できません")
-                        except Exception as voice_error:
-                            # 音声エラーは完全に無視してチャットを継続
-                            print(f"音声読み上げエラー（安全に無視）: {voice_error}")
-                            st.caption("⚠️ 音声読み上げは利用できませんが、チャットは正常に動作しています")
-                    elif st.session_state.voice_enabled and not voice_manager:
-                        st.caption("❌ 音声機能が初期化されていません")
-                    
-                    # AI応答の感情分析
-                    if st.session_state.emotion_tracking:
-                        emotion_manager.update_emotion(ai_response)
-                
-                # チャット送信後にリロードして表示を更新
+                st.session_state.messages.append({"role": "user", "content": user_input, "image": None})
+                st.session_state.needs_ai_response = True
                 st.rerun()
+
+            # --- Stage 2: AIテキスト応答生成 ---
+            if st.session_state.get('needs_ai_response', False):
+                st.session_state.needs_ai_response = False  # フラグ消費
+                
+                last_user_message = ""
+                # 履歴から最後のユーザーメッセージを探す
+                for msg in reversed(st.session_state.messages):
+                    if msg["role"] == "user":
+                        last_user_message = msg["content"]
+                        break
+                
+                if last_user_message:
+                    with st.spinner("応答生成中..."):
+                        # 感情分析 (ユーザー入力に対して)
+                        if st.session_state.emotion_tracking:
+                            emotion_manager.update_emotion(last_user_message)
+                        
+                        # AI応答生成
+                        ai_response = chatbot.chat(last_user_message)
+                        st.session_state.messages = chatbot.conversation_history
+
+                        # 感情分析 (AI応答に対して)
+                        if st.session_state.emotion_tracking:
+                            emotion_manager.update_emotion(ai_response)
+                        
+                        # 音声読み上げ
+                        if st.session_state.voice_enabled and voice_manager and voice_manager.is_available():
+                            try:
+                                voice_manager.speak_text(ai_response)
+                            except Exception as e:
+                                print(f"音声読み上げエラー: {e}")
+                    
+                    # 画像生成フラグを立てて、再描画（ここでテキストが表示される）
+                    if sd_api.check_connection():
+                        st.session_state.needs_image_generation = True
+                    st.rerun()
+
+            # --- Stage 3: 画像生成 ---
+            if st.session_state.get('needs_image_generation', False):
+                st.session_state.needs_image_generation = False # フラグ消費
+
+                last_ai_message_content = ""
+                # 履歴から最後のAIメッセージを探す
+                for msg in reversed(st.session_state.messages):
+                    if msg["role"] == "assistant":
+                        last_ai_message_content = msg["content"]
+                        break
+
+                if last_ai_message_content and "エラーが発生しました" not in last_ai_message_content:
+                    with st.spinner("画像生成中..."):
+                        image_summary = chatbot.summarize_for_image(last_ai_message_content)
+                        character = st.session_state.current_character
+                        assert character is not None
+                        character_base_prompt = character.get("image_prompt", "")
+                        negative_prompt = character.get("image_negative_prompt", "")
+                        final_image_prompt = f"{character_base_prompt}, {image_summary}".strip(", ")
+                        
+                        lora_prompts = []
+                        if 'lora_weights' in st.session_state:
+                            for lora_name, weight in st.session_state.lora_weights.items():
+                                if weight > 0:
+                                    lora_prompts.append(f"<lora:{lora_name}:{weight}>")
+                        final_image_prompt_with_lora = f"{final_image_prompt} {' '.join(lora_prompts)}".strip()
+
+                        generated_image = sd_api.generate_character_image(final_image_prompt_with_lora, negative_prompt)
+
+                        # 最後のメッセージに画像を追加
+                        if st.session_state.messages:
+                            st.session_state.messages[-1]["image"] = generated_image
+                    
+                    # 再描画して画像を表示
+                    st.rerun()
+
+            # 操作ボタン
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                # 【修正】再生成ボタンのロジックを簡素化
+                if st.button("🔄", key="btn_regen") and st.session_state.messages:
+                    if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["role"] == "assistant":
+                        with st.spinner("応答と画像を再生成中..."):
+                            # 1. テキストを再生成
+                            new_resp = chatbot.regenerate_response()
+                            
+                            # 2. 応答があれば画像も生成
+                            if new_resp and "エラー" not in new_resp:
+                                st.session_state.messages = chatbot.conversation_history
+                                generated_image = None
+                                if sd_api.check_connection():
+                                    image_summary = chatbot.summarize_for_image(new_resp)
+                                    character = st.session_state.current_character
+                                    assert character is not None
+                                    character_base_prompt = character.get("image_prompt", "")
+                                    negative_prompt = character.get("image_negative_prompt", "")
+                                    final_image_prompt = f"{character_base_prompt}, {image_summary}".strip(", ")
+                                    
+                                    lora_prompts = []
+                                    if 'lora_weights' in st.session_state:
+                                        for lora_name, weight in st.session_state.lora_weights.items():
+                                            if weight > 0:
+                                                lora_prompts.append(f"<lora:{lora_name}:{weight}>")
+                                    final_image_prompt_with_lora = f"{final_image_prompt} {' '.join(lora_prompts)}".strip()
+
+                                    generated_image = sd_api.generate_character_image(final_image_prompt_with_lora, negative_prompt)
+                                
+                                if st.session_state.messages:
+                                    st.session_state.messages[-1]["image"] = generated_image
+                        
+                        # 3. 最後に一度だけ再描画
+                        st.rerun()
+
+            with col_btn2:
+                if st.button("⏪ 巻き戻し (最後の往復を削除)", key="btn_rollback") and len(st.session_state.messages) >= 2:
+                    chatbot.conversation_history.pop()
+                    chatbot.conversation_history.pop()
+                    if chatbot.chat_session:
+                        chatbot.chat_session.history.pop()
+                        chatbot.chat_session.history.pop()
+                    
+                    st.session_state.messages = chatbot.conversation_history
+                    st.rerun()
+
         else:
             st.chat_input("キャラクターを選択してください...", disabled=True)
     

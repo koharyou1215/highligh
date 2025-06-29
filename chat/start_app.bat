@@ -63,14 +63,14 @@ echo   Starting Streamlit App...
 echo ================================================
 echo.
 echo Once the app starts, access it at:
-echo http://localhost:8501
+echo http://localhost:7861
 echo.
 echo Press Ctrl+C to stop the app.
 echo.
 
 :: Streamlitアプリの起動
 echo [6/6] Launching Streamlit...
-streamlit run app.py --server.port 8501 --server.address localhost
+streamlit run app.py --server.port 7861 --server.address localhost
 
 :: 終了処理
 echo.

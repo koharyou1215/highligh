@@ -46,7 +46,8 @@ class CharacterManager:
             
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                raw = json.load(f)
+            return self._normalize(raw)
         except Exception as e:
             print(f"キャラクター読み込みエラー ({character_id}): {e}")
             return None
@@ -161,3 +162,40 @@ class CharacterManager:
         except Exception as e:
             print(f"キャラクター削除エラー ({character_id}): {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # internal helpers
+    # ------------------------------------------------------------------
+    def _normalize(self, data: Dict) -> Dict:
+        """新スキーマ / 旧スキーマを吸収し、アプリで既存利用しているキーを保証する。"""
+        # 旧スキーマのままなら何もしない
+        if "base_prompt" in data:
+            return data
+
+        # 新スキーマを簡易マッピング
+        intro = data.get("introduction", "")
+        personality = data.get("character_definition", {}).get("personality", {})
+        summary = personality.get("summary", "")
+
+        # base_prompt を生成
+        base_prompt_parts = [intro]
+        if summary and summary not in intro:
+            base_prompt_parts.append(summary)
+        data["base_prompt"] = " ".join(base_prompt_parts).strip()
+
+        # conversation_starters
+        first_msgs = data.get("first_message", [])
+        if first_msgs and isinstance(first_msgs, list):
+            data["conversation_starters"] = first_msgs
+
+        # image prompts
+        img_gen = data.get("image_generation", {})
+        data["image_prompt"] = img_gen.get("positive_prompt", "")
+        data["image_negative_prompt"] = img_gen.get("negative_prompt", "")
+
+        # simple card fields for UI
+        data["personality"] = summary
+        data["background"] = data.get("character_definition", {}).get("background", "")
+        data["speaking_style"] = data.get("character_definition", {}).get("speaking_style", {}).get("base", "")
+
+        return data

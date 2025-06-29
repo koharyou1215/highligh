@@ -3,6 +3,7 @@ import base64
 import io
 from PIL import Image
 import os
+from typing import List
 
 class StableDiffusionAPI:
     def __init__(self, api_url="http://127.0.0.1:7860"):
@@ -14,6 +15,7 @@ class StableDiffusionAPI:
         """
         self.api_url = api_url
         self.txt2img_url = f"{api_url}/sdapi/v1/txt2img"
+        self.loras_url = f"{api_url}/sdapi/v1/loras"
         
     def check_connection(self):
         """
@@ -23,10 +25,30 @@ class StableDiffusionAPI:
             bool: 接続成功ならTrue
         """
         try:
-            response = requests.get(f"{self.api_url}/sdapi/v1/options", timeout=5)
+            response = requests.get(f"{self.api_url}/sdapi/v1/options", timeout=2)
             return response.status_code == 200
         except:
             return False
+    
+    def get_loras(self) -> List[str]:
+        """
+        利用可能なLoRAのリストを取得
+        
+        Returns:
+            List[str]: LoRAファイル名のリスト
+        """
+        if not self.check_connection():
+            return []
+        
+        try:
+            response = requests.get(self.loras_url, timeout=10)
+            if response.status_code == 200:
+                loras = response.json()
+                return [lora['name'] for lora in loras]
+        except Exception as e:
+            print(f"LoRAリスト取得エラー: {e}")
+        
+        return []
     
     def generate_character_image(self, prompt, negative_prompt="", width=512, height=512):
         """
@@ -58,7 +80,7 @@ class StableDiffusionAPI:
         }
         
         try:
-            response = requests.post(self.txt2img_url, json=payload, timeout=60)
+            response = requests.post(self.txt2img_url, json=payload, timeout=30)
             if response.status_code == 200:
                 result = response.json()
                 if result.get('images'):

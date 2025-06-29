@@ -122,7 +122,7 @@ set "SD_DIR=C:\Users\kohar\Downloads\stable-diffusion-webui-1.10.1"
 #### 🖥️ PCでの準備
 1. **バッチファイル実行**
    - `start_app.bat`をダブルクリック
-   - 自動的にブラウザが開く（http://localhost:8501）
+   - 自動的にブラウザが開く（http://localhost:7861）
 
 2. **IPアドレス確認**
    - コマンドプロンプトで`ipconfig`実行
@@ -132,8 +132,8 @@ set "SD_DIR=C:\Users\kohar\Downloads\stable-diffusion-webui-1.10.1"
 1. **同じWi-Fiネットワークに接続**
 2. **Safariで以下にアクセス：**
    ```
-   http://[PCのIPアドレス]:8501
-   例：http://192.168.1.100:8501
+   http://[PCのIPアドレス]:7861
+   例：http://192.168.1.100:7861
    ```
 3. **ホーム画面に追加**で、アプリのように使用可能！
 
@@ -193,7 +193,7 @@ Error: Stable Diffusion WebUI not found
 
 ### ポートエラー
 ```
-Port 8501 is already in use
+Port 7861 is already in use
 ```
 **解決方法：**
 - 既存のStreamlitプロセスを終了
@@ -203,7 +203,7 @@ Port 8501 is already in use
 ### ネットワークアクセスエラー
 **iPhoneからPCにアクセスできない場合：**
 - PCとiPhoneが同じWi-Fiに接続されているか確認
-- WindowsファイアウォールでStreamlitポート（8501）を許可
+- WindowsファイアウォールでStreamlitポート（7861）を許可
 - ルーターの設定でデバイス間通信が許可されているか確認
 
 ## 📞 サポート

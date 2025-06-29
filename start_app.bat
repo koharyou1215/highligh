@@ -50,7 +50,14 @@ set "SD_PATH=C:\Users\kohar\Downloads\stable-diffusion-webui-1.10.1"
 if exist "%SD_PATH%\webui-user.bat" (
     echo Stable Diffusion WebUI found. Starting in new window...
     start "Stable Diffusion WebUI" cmd /c "cd /d %SD_PATH% && webui-user.bat"
-    timeout /t 3 /nobreak >nul
+    echo Waiting for Stable Diffusion API...
+    :loop
+    curl -s http://127.0.0.1:7860/sdapi/v1/options >nul 2>nul
+    if errorlevel 1 (
+        timeout /t 5 >nul
+        goto loop
+    )
+    echo Stable Diffusion API is up!
 ) else (
     echo Stable Diffusion WebUI not found.
     echo Expected path: %SD_PATH%
